@@ -1,0 +1,51 @@
+# Template: ${JOB_NAME}, ${ORDERS_PVC}, ${PAYMENTS_PVC} substituted by the act scripts.
+# Compares the last sequence number on each restored volume.
+# Writer appends ORDER first, then PAYMENT, so on a consistent cut:
+#   payments_max <= orders_max <= payments_max + 1
+# Any payment with a sequence beyond orders_max has no matching order -> torn restore.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: ${JOB_NAME}
+  namespace: ledger
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 600
+  template:
+    spec:
+      restartPolicy: Never
+      containers:
+        - name: verify
+          image: busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              orders_max=$(tail -n1 /orders/orders.log 2>/dev/null | awk '{print $2}')
+              payments_max=$(tail -n1 /payments/payments.log 2>/dev/null | awk '{print $2}')
+              orders_max=${orders_max:-0}
+              payments_max=${payments_max:-0}
+              echo "last order committed   : $orders_max"
+              echo "last payment committed : $payments_max"
+              if [ "$payments_max" -gt "$orders_max" ]; then
+                echo ""
+                echo "[FAIL] $((payments_max - orders_max)) payments have NO matching order."
+                echo "[FAIL] Each snapshot succeeded. The restore is still wrong."
+                exit 1
+              else
+                echo ""
+                echo "[OK] Every payment has a matching order. Restore is consistent."
+              fi
+          volumeMounts:
+            - name: orders
+              mountPath: /orders
+            - name: payments
+              mountPath: /payments
+      volumes:
+        - name: orders
+          persistentVolumeClaim:
+            claimName: ${ORDERS_PVC}
+        - name: payments
+          persistentVolumeClaim:
+            claimName: ${PAYMENTS_PVC}

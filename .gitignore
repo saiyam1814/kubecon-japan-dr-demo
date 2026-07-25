@@ -1,0 +1,16 @@
+# Local automation and generated demo state
+demo/scripts/
+demo/.cache/
+demo/recordings/
+demo/RUNBOOK.md
+demo/OFFLINE-RUNBOOK.md
+
+# Local talk/presentation package
+slides/
+STORYLINE.md
+TALK-SCRIPT.md
+SOURCES.md
+
+# Local editor/OS files
+.DS_Store
+**/.DS_Store

@@ -1,0 +1,88 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ledger
+---
+# Two PVCs that together hold one logical dataset.
+# The `group: ledger` label is what the VolumeGroupSnapshot selects on.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: orders-pvc
+  namespace: ledger
+  labels:
+    group: ledger
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: csi-hostpath-sc
+  resources:
+    requests:
+      storage: 100Mi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: payments-pvc
+  namespace: ledger
+  labels:
+    group: ledger
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: csi-hostpath-sc
+  resources:
+    requests:
+      storage: 100Mi
+---
+# Appends matched pairs: ORDER N -> orders-pvc, PAYMENT N -> payments-pvc.
+# Any snapshot pair that doesn't cut both volumes at the same instant
+# will show payments without a matching order (or vice versa).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ledger-writer
+  namespace: ledger
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # both PVCs are RWO
+  selector:
+    matchLabels:
+      app: ledger-writer
+  template:
+    metadata:
+      labels:
+        app: ledger-writer
+    spec:
+      containers:
+        - name: writer
+          image: busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -c
+            - |
+              i=$(tail -n1 /orders/orders.log 2>/dev/null | awk '{print $2+1}')
+              i=${i:-1}
+              echo "ledger-writer starting at sequence $i"
+              while true; do
+                if [ -f /orders/.pause ]; then
+                  sleep 0.1
+                  continue
+                fi
+                echo "ORDER $i" >> /orders/orders.log
+                echo "PAYMENT $i" >> /payments/payments.log
+                i=$((i+1))
+                sleep 0.2
+              done
+          volumeMounts:
+            - name: orders
+              mountPath: /orders
+            - name: payments
+              mountPath: /payments
+      volumes:
+        - name: orders
+          persistentVolumeClaim:
+            claimName: orders-pvc
+        - name: payments
+          persistentVolumeClaim:
+            claimName: payments-pvc

@@ -1,0 +1,20 @@
+# Template: ${GITEA_URL} substituted by 02-up-dr.sh.
+# Sync policy is deliberately MANUAL: Act 2 triggers the sync on stage,
+# and auto-sync/selfHeal would fight the Velero restore (which is a talking point).
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: guestbook
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ${GITEA_URL}/demo/guestbook.git
+    targetRevision: HEAD
+    path: .
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: guestbook
+  syncPolicy:
+    syncOptions:
+      - CreateNamespace=true
