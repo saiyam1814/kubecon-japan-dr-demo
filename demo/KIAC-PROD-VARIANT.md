@@ -24,9 +24,9 @@ fights you, the main guide's all-kind path remains fully valid.
 |---|---|---|
 | Prod cluster | `kind-dr-prod` (container node) | `kiac-drprod` (VM node) |
 | Recovery cluster | `kind-dr-dr` | `kind-dr-dr` (unchanged) |
-| Backup vault | MinIO on the `kind` Docker network | SeaweedFS, reachable from **both** runtimes |
-| Prod Velero S3 URL | `http://dr-minio:9000` | `http://192.168.64.1:9200` (host gateway) |
-| DR Velero S3 URL | `http://dr-minio:9000` | `http://dr-seaweed:8333` (kind network) |
+| Backup vault | SeaweedFS on the `kind` Docker network | same container, reached via the published host port |
+| Prod Velero S3 URL | `http://dr-seaweed:8333` | `http://192.168.64.1:9200` (host gateway) |
+| DR Velero S3 URL | `http://dr-seaweed:8333` | `http://dr-seaweed:8333` (unchanged) |
 | Act 2 disaster | `docker stop dr-prod-control-plane` | `container stop kiac-drprod-control-plane` |
 | Bring prod back after | `docker start dr-prod-control-plane` | `kiac resume cluster --name drprod` |
 | Gitea, Argo CD, ledger, Act 3, Act 4 | - | unchanged |
@@ -74,35 +74,10 @@ kubectl --context kiac-drprod get nodes
 
 Single node, Kubernetes v1.36.1, ready in about 90 seconds.
 
-## 5. Start the shared SeaweedFS vault
+## 5. The shared SeaweedFS vault
 
-```bash
-mkdir -p .local
-cat > .local/s3.json <<'EOF'
-{"identities":[{"name":"velero","credentials":[{"accessKey":"minio","secretKey":"minio123"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
-EOF
-
-export SEAWEED_IMAGE='chrislusf/seaweedfs:4.40@sha256:52194fba4fecd0083c842158b3a902ba6e04a63619b2b0efcd08007bdb6a4602'
-export MC_IMAGE='minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727'
-
-docker volume create dr-seaweed-data
-docker rm -f dr-seaweed 2>/dev/null || true
-docker run -d \
-  --name dr-seaweed \
-  --network kind \
-  --restart unless-stopped \
-  -p 0.0.0.0:9200:8333 \
-  -v dr-seaweed-data:/data \
-  -v "$PWD/.local/s3.json":/etc/seaweedfs/s3.json:ro \
-  "$SEAWEED_IMAGE" server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
-
-docker run --pull=never --rm --network kind --entrypoint sh "$MC_IMAGE" -c '
-  until mc alias set sw http://dr-seaweed:8333 minio minio123 2>/dev/null; do sleep 2; done
-  mc mb --ignore-existing sw/velero
-'
-```
-
-Sanity checks:
+The main guide's section 8 already creates the `dr-seaweed` container with the
+published host port 9200, so there is nothing new to start. Sanity checks:
 
 ```bash
 curl -fsS -o /dev/null -w 'host port: %{http_code}\n' http://127.0.0.1:9200
@@ -152,26 +127,14 @@ velero install \
 kubectl --context kiac-drprod -n velero get backupstoragelocation   # Available
 ```
 
-On the **recovery cluster**: if you built it fresh for this variant, install
-Velero with `--backup-location-config 'region=seaweed,s3ForcePathStyle=true,s3Url=http://dr-seaweed:8333'`.
-If the main guide's Velero is already installed there, add a second location
-instead (this is what was tested):
-
-```bash
-velero backup-location create seaweed \
-  --kubecontext kind-dr-dr \
-  --provider aws \
-  --bucket velero \
-  --config region=seaweed,s3ForcePathStyle=true,s3Url=http://dr-seaweed:8333
-
-kubectl --context kind-dr-dr -n velero get backupstoragelocation seaweed   # Available
-```
+On the **recovery cluster** nothing changes: the main guide's Velero install
+already points at `http://dr-seaweed:8333`, so both clusters share the same
+bucket and the DR side syncs the prod backups automatically (about a minute).
 
 ## 7. Seed prod and create the rehearsal backup
 
-Run the main guide's section 10 with `PROD_CTX=kiac-drprod`. If the DR cluster
-uses the extra `seaweed` location, add `--storage-location seaweed` to the
-backup command. Verify the moved bytes:
+Run the main guide's section 10 with `PROD_CTX=kiac-drprod`. Verify the moved
+bytes:
 
 ```bash
 kubectl --context kiac-drprod -n velero get datauploads \

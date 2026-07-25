@@ -3,7 +3,7 @@
 Demo lab from the KubeCon + CloudNativeCon Japan 2026 session by
 Saiyam Pathak and Saloni.
 
-Everything runs locally: two kind clusters, MinIO, and Gitea in Docker.
+Everything runs locally: two kind clusters, SeaweedFS, and Gitea in Docker.
 After the one-time online setup, the demo acts run with no internet at all.
 
 This repository contains only:
@@ -20,7 +20,7 @@ The guide covers:
 
 1. Creating the prod and recovery kind clusters.
 2. Installing CSI snapshots and VolumeGroupSnapshot.
-3. Installing Velero with local MinIO.
+3. Installing Velero with a local S3 vault (SeaweedFS).
 4. Configuring local Gitea and Argo CD.
 5. Running the three main demo acts manually:
    - **Act 1** - Velero backup, delete the namespace, restore, data is back.

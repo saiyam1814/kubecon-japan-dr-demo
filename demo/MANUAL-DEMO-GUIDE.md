@@ -12,7 +12,7 @@ optional appendix.
 |---|---|
 | `dr-prod` kind cluster | Active cloud region or primary data center |
 | `dr-dr` kind cluster | Recovery region, account, provider, or secondary data center |
-| MinIO | Recovery vault or offsite object store |
+| SeaweedFS (local S3) | Recovery vault or offsite object store |
 | Gitea | Git and infrastructure configuration outside production |
 | Stop the prod container | Loss of the source failure domain |
 | SQL row check | Business-level recovery validation |
@@ -41,7 +41,8 @@ Tested versions:
 - PostgreSQL 16.14
 - BusyBox 1.36.1
 - Gitea 1.24.7
-- MinIO `RELEASE.2025-09-07T16-13-09Z`
+- SeaweedFS 4.40 (S3-compatible vault; `minio/minio` is archived upstream)
+- MinIO `mc` client `RELEASE.2025-08-13` (bucket creation only)
 - vCluster CLI 0.36.0
 
 All application and local service images in the manifests are pinned to an exact
@@ -66,7 +67,7 @@ export PROD_CTX=kind-dr-prod
 export DR_CTX=kind-dr-dr
 
 export KIND_IMAGE='kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5'
-export MINIO_IMAGE='minio/minio:RELEASE.2025-09-07T16-13-09Z@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e'
+export SEAWEED_IMAGE='chrislusf/seaweedfs:4.40@sha256:52194fba4fecd0083c842158b3a902ba6e04a63619b2b0efcd08007bdb6a4602'
 export MC_IMAGE='minio/mc:RELEASE.2025-08-13T08-35-41Z@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727'
 export GITEA_IMAGE='gitea/gitea:1.24.7@sha256:918955f16b1e91732af6c449bb2db3a34271748dbed1ccfbae48f8a2fb5480b8'
 export POSTGRES_IMAGE='postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777'
@@ -150,28 +151,35 @@ kubectl --context "$CTX" apply -f manifests/storage/snapshotclasses.yaml
 This driver is for the local test only. It is not a production storage
 recommendation.
 
-## 8. Start persistent local MinIO
+## 8. Start the persistent local S3 vault (SeaweedFS)
 
 ```bash
-docker volume create dr-minio-data
-docker rm -f dr-minio 2>/dev/null || true
+mkdir -p .local
+cat > .local/s3.json <<'EOF'
+{"identities":[{"name":"velero","credentials":[{"accessKey":"minio","secretKey":"minio123"}],"actions":["Admin","Read","Write","List","Tagging"]}]}
+EOF
+
+docker volume create dr-seaweed-data
+docker rm -f dr-seaweed 2>/dev/null || true
 
 docker run -d \
-  --name dr-minio \
+  --name dr-seaweed \
   --network kind \
   --restart unless-stopped \
-  -v dr-minio-data:/data \
-  -e MINIO_ROOT_USER=minio \
-  -e MINIO_ROOT_PASSWORD=minio123 \
-  "$MINIO_IMAGE" server /data
+  -p 0.0.0.0:9200:8333 \
+  -v dr-seaweed-data:/data \
+  -v "$PWD/.local/s3.json":/etc/seaweedfs/s3.json:ro \
+  "$SEAWEED_IMAGE" server -dir=/data -s3 -s3.port=8333 -s3.config=/etc/seaweedfs/s3.json
 
 docker run --pull=never --rm --network kind --entrypoint sh "$MC_IMAGE" -c '
-  until mc alias set local http://dr-minio:9000 minio minio123; do sleep 1; done
-  mc mb --ignore-existing local/velero
+  until mc alias set sw http://dr-seaweed:8333 minio minio123 2>/dev/null; do sleep 2; done
+  mc mb --ignore-existing sw/velero
 '
 ```
 
-MinIO is separate from both kind clusters and uses a persistent Docker volume.
+The vault is separate from both kind clusters and uses a persistent Docker
+volume. The published host port 9200 is only needed by the kiac variant
+(`KIAC-PROD-VARIANT.md`); it does no harm otherwise.
 
 ## 9. Install Velero in both clusters
 
@@ -197,7 +205,7 @@ velero install \
   --bucket velero \
   --secret-file /tmp/velero-minio-creds \
   --backup-location-config \
-    'region=minio,s3ForcePathStyle=true,s3Url=http://dr-minio:9000' \
+    'region=seaweed,s3ForcePathStyle=true,s3Url=http://dr-seaweed:8333' \
   --use-node-agent \
   --use-volume-snapshots=false \
   --features=EnableCSI \
@@ -381,7 +389,7 @@ Expected:
 - both backup locations are `Available`
 - guestbook row count is `4`
 - ledger writer is Ready
-- `dr-minio` and `dr-gitea` are running
+- `dr-seaweed` and `dr-gitea` are running
 
 Do not run setup commands on stage.
 
