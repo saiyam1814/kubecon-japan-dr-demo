@@ -31,5 +31,10 @@ The guide covers:
 6. Running the optional vind rehearsal demo.
 7. Preparing and validating the environment for an offline conference.
 
+There is also a tested variant where production runs on
+[kiac](https://github.com/saiyam1814/kiac) (Kubernetes in Apple Containers),
+so the disaster kills a real VM and the restore crosses substrates:
+[`demo/KIAC-PROD-VARIANT.md`](demo/KIAC-PROD-VARIANT.md)
+
 Automation scripts, credentials, caches, recordings, slide files, research notes,
 PDF, and PPTX artifacts are intentionally excluded from Git.
