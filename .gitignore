@@ -1,9 +1,11 @@
 # Local automation and generated demo state
 demo/scripts/
 demo/.cache/
+demo/.local/
 demo/recordings/
 demo/RUNBOOK.md
 demo/OFFLINE-RUNBOOK.md
+demo/STAGE-NOTES.md
 
 # Local talk/presentation package
 slides/

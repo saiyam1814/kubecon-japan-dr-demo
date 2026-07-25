@@ -15,7 +15,7 @@ This repository contains only:
 Start here:
 
 - [`demo/MANUAL-DEMO-GUIDE.md`](demo/MANUAL-DEMO-GUIDE.md) - one-time setup, end to end
-- [`demo/SHOW-FLOW.md`](demo/SHOW-FLOW.md) - the exact on-stage command sequence, act by act
+- [`demo/DEMO-STEPS.md`](demo/DEMO-STEPS.md) - the commands for each demo, step by step
 
 The guide covers:
 

@@ -1,137 +1,115 @@
-# Show Flow - exactly what to run on stage, in order
+# Demo steps
 
-This is the on-stage script. All setup (guide sections 1-13) is already done
-days before. Each act states the one claim it proves, then the commands in
-order, each with a one-line reason. Run everything from `demo/`.
+Commands to run each demo, with a one-line explanation per step. Assumes the
+one-time setup from `MANUAL-DEMO-GUIDE.md` is complete. Run from `demo/`.
 
-Set once in the stage terminal:
+Set once:
 
 ```bash
-export PROD_CTX=kind-dr-prod   # or kiac-drprod if using KIAC-PROD-VARIANT.md
+export PROD_CTX=kind-dr-prod   # or kiac-drprod when using KIAC-PROD-VARIANT.md
 export DR_CTX=kind-dr-dr
 ```
 
-Before walking on stage (30 seconds, not shown to the audience):
-
-```bash
-kubectl --context "$PROD_CTX" get --raw=/readyz                      # prod alive
-kubectl --context "$DR_CTX" -n velero get backupstoragelocation     # Available
-kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
-  psql -U postgres -d guestbook -tAc 'select count(*) from attendees'  # 4
-```
-
-Rule for every act: if something hangs for more than ~30 seconds, switch to the
-fallback recording and keep talking. Never debug on stage.
-
 ---
 
-## ACT 1 - "Backup works. Watch." (~60s)
+## Demo 1 - Velero backup and restore
 
-**The claim: Velero can back up a stateful app and bring it back, data included.**
-This act builds trust before we break things. Velero is the star.
+Shows that Velero can back up a stateful app (objects + PV data) and restore
+it, data included.
 
 ```bash
-# 1. Find the pre-tested backup (created during prep, lives in SeaweedFS)
+# Find the newest completed backup (created during setup, stored in SeaweedFS)
 export BACKUP=$(kubectl --context "$PROD_CTX" -n velero get backups.velero.io -o json |
   jq -r '[.items[] | select(.status.phase=="Completed"
     and (.metadata.name | startswith("guestbook-rehearsal")))]
     | sort_by(.metadata.creationTimestamp) | last | .metadata.name')
 echo "$BACKUP"
 
-# 2. Show production data: four real rows, this is what we must not lose
+# Show the current production data
 kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
   psql -U postgres -d guestbook -c 'select * from attendees;'
 
-# 3. Prove the recovery point exists OUTSIDE the cluster: PV bytes moved to S3
+# Show that the PV bytes were copied out of the cluster to object storage
 kubectl --context "$PROD_CTX" -n velero get datauploads \
   -l "velero.io/backup-name=$BACKUP" \
   -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,BYTES:.status.progress.bytesDone'
 
-# 4. Be the disaster: delete the whole namespace, volume included
+# Delete the namespace, PVC included
 kubectl --context "$PROD_CTX" delete namespace guestbook --wait
 
-# 5. One command brings it back
+# Restore from the backup
 velero restore create --kubecontext "$PROD_CTX" --from-backup "$BACKUP" --wait
 
-# 6. Wait for Postgres, then show the SAME four rows
+# Wait for Postgres and confirm the same rows are back
 kubectl --context "$PROD_CTX" -n guestbook rollout status statefulset/postgres --timeout 300s
 kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
   psql -U postgres -d guestbook -c 'select * from attendees;'
 ```
 
-Say: "Useful. Real. And it is only the first quarter of disaster recovery."
-
 ---
 
-## ACT 2 - "Let's lose production" (~3 min)
+## Demo 2 - cluster loss, GitOps sync, restore into the recovery cluster
 
-**The claim: GitOps rebuilds your intent, not your data. Recovery is Velero
-plus GitOps in the right order.** Velero is still the star; Argo is the trap.
+Shows that GitOps recreates the declared objects but not the stored data, and
+that the Velero recovery point restored in the right order completes the
+recovery. Uses `$BACKUP` from Demo 1 (both clusters see the same bucket).
 
 ```bash
-# 1. Start the clock: real RTO is measured, not guessed
+# Record the start time
 date
 
-# 2. THE DISASTER - the production control plane dies
+# Stop the production control plane
 docker stop dr-prod-control-plane            # kind prod
-# container stop kiac-drprod-control-plane   # kiac variant: powers off a real VM
+# container stop kiac-drprod-control-plane   # kiac variant
 
-# 3. Prove prod is gone: the API does not answer
+# Confirm the production API no longer answers
 kubectl --context "$PROD_CTX" get nodes --request-timeout=4s || true
 
-# 4. On-call reflex: sync the app into the DR cluster from Git
+# Trigger the Argo CD sync in the recovery cluster
 kubectl --context "$DR_CTX" -n argocd patch application guestbook --type merge \
   -p '{"operation":{"initiatedBy":{"username":"on-call"},"sync":{"revision":"HEAD"}}}'
 
-# 5. Watch Argo go green: Synced, then Postgres becomes Ready
+# Wait until Argo reports Synced and Postgres is Ready
 kubectl --context "$DR_CTX" -n argocd wait application/guestbook \
   --for=jsonpath='{.status.sync.status}'=Synced --timeout=300s
 kubectl --context "$DR_CTX" -n guestbook rollout status statefulset/postgres --timeout 300s
 
-# 6. THE TRAP - everything is green, so check the data...
+# Query the data: the table does not exist, the volume is new and empty
 kubectl --context "$DR_CTX" -n guestbook exec statefulset/postgres -- \
   psql -U postgres -d guestbook -c 'select * from attendees;' || true
-#    -> "relation attendees does not exist". Green is not recovered.
 
-# 7. Real recovery: clear the empty objects, restore the recovery point
+# Remove the empty resources and restore the recovery point instead
 kubectl --context "$DR_CTX" delete namespace guestbook --wait
 velero restore create --kubecontext "$DR_CTX" --from-backup "$BACKUP" --wait
 
-# 8. Validate like a user would: the data is there
+# Confirm the data is present in the recovery cluster
 kubectl --context "$DR_CTX" -n guestbook rollout status statefulset/postgres --timeout 300s
 kubectl --context "$DR_CTX" -n guestbook exec statefulset/postgres -- \
   psql -U postgres -d guestbook -c 'select * from attendees;'
 
-# 9. Stop the clock
+# Record the end time
 date
 ```
 
-Say: "The timer covers only this scripted slice. Production RTO adds detection,
-decision, traffic cutover, and failback around it."
-
-`$BACKUP` was set in Act 1. If the variable is lost, resolve it from the DR
-side (both clusters share the vault):
-`kubectl --context "$DR_CTX" -n velero get backups.velero.io`
-
 ---
 
-## ACT 3 - "The snapshot gap" (~4 min)
+## Demo 3 - individual snapshots vs one VolumeGroupSnapshot
 
-**The claim: two individually perfect snapshots can produce one corrupt
-application, and VolumeGroupSnapshot (Kubernetes 1.36) closes that gap.**
-No Velero in this act, on purpose: this is a storage-layer problem that exists
-below every backup tool. The ledger app writes matched ORDER/PAYMENT pairs to
-two PVCs; the writer pauses via a `.pause` file so timing is deterministic.
+Shows that snapshots of two volumes taken at different times restore into a
+state that never existed (payments without orders), and that one
+VolumeGroupSnapshot produces a consistent recovery point. The ledger app
+writes matched ORDER/PAYMENT pairs to two PVCs; a `.pause` file pauses the
+writer so timing is deterministic.
 
 ```bash
-# 0. Fresh run id and a clean ledger
+# Fresh run id and a clean ledger
 export RUN_ID=$(date +%H%M%S)
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- touch /orders/.pause
 sleep 1
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- \
   rm -f /orders/orders.log /payments/payments.log /orders/.pause
 
-# 1. Snapshot volume A (orders) at t=0
+# Snapshot the orders volume at t=0
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- touch /orders/.pause
 sleep 1
 kubectl --context "$DR_CTX" -n ledger apply -f - <<EOF
@@ -145,7 +123,7 @@ EOF
 kubectl --context "$DR_CTX" -n ledger wait volumesnapshot/torn-orders-"$RUN_ID" \
   --for=jsonpath='{.status.readyToUse}'=true --timeout=120s
 
-# 2. Let the app keep writing for five seconds, then snapshot volume B (payments)
+# Let the writer run for five seconds, then snapshot the payments volume
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- rm -f /orders/.pause
 sleep 5
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- touch /orders/.pause
@@ -162,7 +140,7 @@ kubectl --context "$DR_CTX" -n ledger wait volumesnapshot/torn-payments-"$RUN_ID
   --for=jsonpath='{.status.readyToUse}'=true --timeout=120s
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- rm -f /orders/.pause
 
-# 3. Restore both "perfect" snapshots into new PVCs
+# Restore both individual snapshots into new PVCs
 for item in orders payments; do
 kubectl --context "$DR_CTX" -n ledger apply -f - <<EOF
 apiVersion: v1
@@ -176,14 +154,14 @@ spec:
 EOF
 done
 
-# 4. Verify: payments exist with NO matching order -> [FAIL]
+# Run the verifier: expect FAIL, payments exist without matching orders
 export JOB_NAME="verify-torn-${RUN_ID}" ORDERS_PVC="restored-torn-orders-${RUN_ID}" PAYMENTS_PVC="restored-torn-payments-${RUN_ID}"
 envsubst '${JOB_NAME} ${ORDERS_PVC} ${PAYMENTS_PVC}' < manifests/ledger/verify-job.tmpl.yaml |
   kubectl --context "$DR_CTX" apply -f -
 kubectl --context "$DR_CTX" -n ledger wait job/"$JOB_NAME" --for=condition=complete --timeout=120s || true
 kubectl --context "$DR_CTX" -n ledger logs job/"$JOB_NAME"
 
-# 5. Now the fix: ONE VolumeGroupSnapshot cuts both volumes at the same instant
+# Take one VolumeGroupSnapshot across both PVCs (selected by label)
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- touch /orders/.pause
 sleep 1
 kubectl --context "$DR_CTX" -n ledger apply -f - <<EOF
@@ -198,7 +176,7 @@ kubectl --context "$DR_CTX" -n ledger wait volumegroupsnapshot/group-"$RUN_ID" \
   --for=jsonpath='{.status.readyToUse}'=true --timeout=120s
 kubectl --context "$DR_CTX" -n ledger exec deployment/ledger-writer -- rm -f /orders/.pause
 
-# 6. Find the two auto-generated member snapshots of the group
+# Find the two member snapshots the group created
 export ORDERS_SNAPSHOT=$(kubectl --context "$DR_CTX" -n ledger get volumesnapshot -o json |
   jq -r --arg g "group-${RUN_ID}" '.items[] | select(.status.volumeGroupSnapshotName==$g)
     | select(.spec.source.persistentVolumeClaimName=="orders-pvc") | .metadata.name')
@@ -206,7 +184,7 @@ export PAYMENTS_SNAPSHOT=$(kubectl --context "$DR_CTX" -n ledger get volumesnaps
   jq -r --arg g "group-${RUN_ID}" '.items[] | select(.status.volumeGroupSnapshotName==$g)
     | select(.spec.source.persistentVolumeClaimName=="payments-pvc") | .metadata.name')
 
-# 7. Restore the group members the same way
+# Restore the member snapshots the same way
 for item in orders payments; do
   if [ "$item" = orders ]; then SNAP="$ORDERS_SNAPSHOT"; else SNAP="$PAYMENTS_SNAPSHOT"; fi
 kubectl --context "$DR_CTX" -n ledger apply -f - <<EOF
@@ -221,7 +199,7 @@ spec:
 EOF
 done
 
-# 8. Verify again: every payment has its order -> [OK]
+# Run the verifier again: expect OK, every payment has a matching order
 export JOB_NAME="verify-group-${RUN_ID}" ORDERS_PVC="restored-group-orders-${RUN_ID}" PAYMENTS_PVC="restored-group-payments-${RUN_ID}"
 envsubst '${JOB_NAME} ${ORDERS_PVC} ${PAYMENTS_PVC}' < manifests/ledger/verify-job.tmpl.yaml |
   kubectl --context "$DR_CTX" apply -f -
@@ -229,26 +207,26 @@ kubectl --context "$DR_CTX" -n ledger wait job/"$JOB_NAME" --for=condition=compl
 kubectl --context "$DR_CTX" -n ledger logs job/"$JOB_NAME"
 ```
 
-Say: "Crash-consistent across volumes, not application-consistent. The API is
-GA; the driver support and the integration are still yours to own."
+The result is crash-consistent across volumes, not application-consistent.
 
 ---
 
-## OPTIONAL ACT 4 - vind drill (~60-90s, only if time)
+## Demo 4 (optional) - vind cluster snapshot and restore
 
-**The claim: destructive recovery drills should be cheap enough to run weekly.**
+Shows a whole local cluster deleted and restored from one archive file, with
+the original data intact.
 
 ```bash
 export VCLUSTER_SKIP_VERSION_CHECK=true
 
-# 1. Show the data born with the cluster
+# Show the file written when the cluster was first created
 vcluster connect drill
 kubectl -n prod-data exec deployment/drill-app -- cat /data/birth.txt
 
-# 2. Delete the ENTIRE cluster
+# Delete the entire cluster
 vcluster delete drill
 
-# 3. Restore it from one archive file, then prove the same timestamp survived
+# Restore it from the archive and confirm the same timestamp
 vcluster restore drill .local/drill-snapshot.tar.gz
 vcluster connect drill
 kubectl -n prod-data rollout status deployment/drill-app --timeout 180s
@@ -257,7 +235,7 @@ kubectl -n prod-data exec deployment/drill-app -- cat /data/birth.txt
 
 ---
 
-## After the talk / between rehearsals
+## Reset between runs
 
 ```bash
 docker start dr-prod-control-plane            # kind prod back
@@ -267,7 +245,3 @@ kubectl --context "$DR_CTX" delete namespace ledger --ignore-not-found
 kubectl --context "$DR_CTX" apply -f manifests/ledger/ledger.yaml
 kubectl --context "$DR_CTX" -n ledger rollout status deployment/ledger-writer --timeout 180s
 ```
-
-Note: `kiac resume` / `docker start` are **reset steps, never demo steps**. The
-talk never brings prod back on stage; DR is about serving users from somewhere
-else while prod is still smoking.
