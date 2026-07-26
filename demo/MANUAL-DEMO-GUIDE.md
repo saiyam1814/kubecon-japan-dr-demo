@@ -139,7 +139,8 @@ The patch may report that the value already exists on a repeat run. That is safe
 
 ## 7. Install the hostpath CSI test driver
 
-Clone once while online:
+Every command in this guide runs from the `demo/` directory (section 4); the
+`manifests/...` paths are relative to it. Clone once while online:
 
 ```bash
 git clone --depth 1 --branch v1.17.1 \
