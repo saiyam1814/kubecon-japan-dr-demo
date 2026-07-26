@@ -3,9 +3,10 @@
 Commands to run each demo, with a one-line explanation per step. Assumes the
 one-time setup from `MANUAL-DEMO-GUIDE.md` is complete. Run from `demo/`.
 
-Set once:
+Set once (works from anywhere inside the repo checkout):
 
 ```bash
+cd "$(git rev-parse --show-toplevel)/demo"
 export PROD_CTX=kiac-drprod    # kind-prod fallback: kind-dr-prod
 export DR_CTX=kind-dr-dr
 ```

@@ -71,9 +71,13 @@ kind cluster, the Docker volumes, or local demo artifacts after preparation.
 
 ## 4. Set common values
 
-Run from `kubecon-dr-talk/demo`:
+Every block in this guide starts from the `demo/` directory; the first line
+below puts you there from anywhere inside the repo checkout. Re-run this whole
+block in every new terminal.
 
 ```bash
+cd "$(git rev-parse --show-toplevel)/demo"
+
 export PROD_CTX=kiac-drprod
 export DR_CLUSTER=dr-dr
 export DR_CTX=kind-dr-dr
@@ -139,10 +143,11 @@ The patch may report that the value already exists on a repeat run. That is safe
 
 ## 7. Install the hostpath CSI test driver
 
-Every command in this guide runs from the `demo/` directory (section 4); the
-`manifests/...` paths are relative to it. Clone once while online:
+Clone once while online:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)/demo"
+
 git clone --depth 1 --branch v1.17.1 \
   https://github.com/kubernetes-csi/csi-driver-host-path.git
 ```
@@ -150,6 +155,7 @@ git clone --depth 1 --branch v1.17.1 \
 For each context:
 
 ```bash
+cd "$(git rev-parse --show-toplevel)/demo"
 export CTX="$PROD_CTX"  # repeat later with CTX="$DR_CTX"
 
 kubectl config use-context "$CTX"
