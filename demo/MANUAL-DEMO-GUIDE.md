@@ -452,6 +452,10 @@ kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
 
 kubectl --context "$DR_CTX" -n ledger get deployment ledger-writer
 
+kubectl --context "$PROD_CTX" -n velero get backups.velero.io
+
+kubectl --context "$DR_CTX" -n argocd get application guestbook
+
 curl -fsS http://127.0.0.1:3300/api/healthz
 ```
 
@@ -463,7 +467,11 @@ Expected:
   this passes offline
 - guestbook row count is `4`
 - ledger writer is Ready
-- `dr-seaweed` and `dr-gitea` are running
+- at least one `guestbook-rehearsal-*` backup with phase `Completed`
+- the Argo application exists and shows `OutOfSync` (nothing deployed yet -
+  that is the correct pre-demo state)
+- `dr-seaweed` and `dr-gitea` are running (the kiac prod node is a VM, not a
+  Docker container, so it does not appear in `docker ps`)
 
 Do not run setup commands on stage.
 
