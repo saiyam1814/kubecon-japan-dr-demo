@@ -218,17 +218,22 @@ it as `http://dr-seaweed:8333` (the DR cluster uses this), and the kiac VM
 reaches it through the published host port as `http://192.168.64.1:9200` (the
 prod cluster uses this).
 
-Sanity-check both paths now:
+Sanity-check both paths now. An HTTP **403** is the expected success: it means
+the vault answered and rejected the unsigned anonymous request. Only a
+connection error (`000`, refused, timeout) is a failure. Velero authenticates
+with the access keys, so it is not affected by the 403.
 
 ```bash
-curl -fsS -o /dev/null -w 'host port: %{http_code}\n' http://127.0.0.1:9200
+curl -sS -o /dev/null -w 'host port: %{http_code}\n' http://127.0.0.1:9200
+# expect: host port: 403
 
 kubectl --context "$PROD_CTX" run nettest --restart=Never \
   --image="$BUSYBOX_IMAGE" \
   -- sh -c 'wget -q -S -O /dev/null http://192.168.64.1:9200 2>&1 | head -1'
 kubectl --context "$PROD_CTX" wait pod/nettest \
   --for=jsonpath='{.status.phase}'=Succeeded --timeout=90s
-kubectl --context "$PROD_CTX" logs nettest     # expect an HTTP status line
+kubectl --context "$PROD_CTX" logs nettest
+# expect: HTTP/1.1 403 Forbidden
 kubectl --context "$PROD_CTX" delete pod nettest
 ```
 
