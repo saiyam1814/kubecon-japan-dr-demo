@@ -235,13 +235,58 @@ kubectl -n prod-data exec deployment/drill-app -- cat /data/birth.txt
 
 ---
 
-## Reset between runs
+## Reset to the post-setup state
+
+Returns the environment to exactly where `MANUAL-DEMO-GUIDE.md` leaves it, so
+the demos can be practiced again from scratch. Safe to run after a complete or
+an interrupted run; every step is idempotent. The vault, Gitea, Argo CD, and
+the rehearsal backup are never touched by the demos, so they need no reset.
 
 ```bash
-docker start dr-prod-control-plane            # kind prod back
+# Bring the production control plane back (Demo 2 leaves it stopped)
+docker start dr-prod-control-plane            # kind prod
 # kiac resume cluster --name drprod           # kiac variant instead
-kubectl --context "$DR_CTX" delete namespace guestbook --ignore-not-found
-kubectl --context "$DR_CTX" delete namespace ledger --ignore-not-found
+until kubectl --context "$PROD_CTX" get --raw=/readyz --request-timeout=5s >/dev/null 2>&1; do sleep 5; done
+
+# Ensure the production guestbook exists and holds the four seeded rows
+# (no-op after a successful Demo 1; recreates the app after an interrupted one)
+kubectl --context "$PROD_CTX" apply -f manifests/guestbook/namespace.yaml
+kubectl --context "$PROD_CTX" apply -f manifests/guestbook/postgres.yaml
+kubectl --context "$PROD_CTX" -n guestbook rollout status statefulset/postgres --timeout 300s
+kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
+  psql -U postgres -d guestbook -c \
+  'CREATE TABLE IF NOT EXISTS attendees (id serial PRIMARY KEY, name text, note text);'
+kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
+  psql -U postgres -d guestbook -c \
+  "INSERT INTO attendees (name, note)
+   SELECT * FROM (VALUES
+     ('Priya',  'came for the demos'),
+     ('Marcus', 'still calls it swarm'),
+     ('Chen',   'has tested a restore. once.'),
+     ('Fatima', 'owns the pager tonight')) v(name, note)
+   WHERE NOT EXISTS (SELECT 1 FROM attendees);"
+
+# Clear everything the demos created in the recovery cluster.
+# Deleting the ledger namespace also removes the torn/group snapshots,
+# restored PVCs, and verifier jobs from Demo 3; reapplying gives fresh PVCs.
+kubectl --context "$DR_CTX" delete namespace guestbook --ignore-not-found --wait
+kubectl --context "$DR_CTX" delete namespace ledger --ignore-not-found --wait
 kubectl --context "$DR_CTX" apply -f manifests/ledger/ledger.yaml
 kubectl --context "$DR_CTX" -n ledger rollout status deployment/ledger-writer --timeout 180s
+
+# Optional: remove old restore records so Velero listings stay readable
+kubectl --context "$PROD_CTX" -n velero delete restores.velero.io --all --ignore-not-found
+kubectl --context "$DR_CTX" -n velero delete restores.velero.io --all --ignore-not-found
+
+# Verify the reset: expect ok / ok / 4 / Available / OutOfSync
+kubectl --context "$PROD_CTX" get --raw=/readyz
+kubectl --context "$DR_CTX" get --raw=/readyz
+kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
+  psql -U postgres -d guestbook -tAc 'select count(*) from attendees'
+kubectl --context "$DR_CTX" -n velero get backupstoragelocation -o jsonpath='{.items[0].status.phase}{"\n"}'
+kubectl --context "$DR_CTX" -n argocd get application guestbook -o jsonpath='{.status.sync.status}{"\n"}'
 ```
+
+If Demo 4 was run, the drill cluster ends the demo already restored; nothing
+to reset. If its restore was interrupted, re-run:
+`vcluster restore drill .local/drill-snapshot.tar.gz`
