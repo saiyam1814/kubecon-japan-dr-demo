@@ -3,8 +3,13 @@
 Demo lab from the KubeCon + CloudNativeCon Japan 2026 session by
 Saiyam Pathak and Saloni.
 
-Everything runs locally: two kind clusters, SeaweedFS, and Gitea in Docker.
-After the one-time online setup, the demo acts run with no internet at all.
+Everything runs locally. Production is a
+[kiac](https://github.com/saiyam1814/kiac) cluster - Kubernetes in Apple
+Containers, where the node is its own lightweight VM - and recovery is a kind
+cluster, with SeaweedFS and Gitea in Docker. Losing production means powering
+off a real VM, and the restore crosses substrates. After the one-time online
+setup, the demos run with no internet at all. (No Apple silicon? The guide
+includes a kind-prod fallback.)
 
 This repository contains only:
 
@@ -31,11 +36,6 @@ The guide covers:
      one VolumeGroupSnapshot keeps it consistent.
 6. Running the optional vind rehearsal demo.
 7. Preparing and validating the environment for an offline conference.
-
-There is also a tested variant where production runs on
-[kiac](https://github.com/saiyam1814/kiac) (Kubernetes in Apple Containers),
-so the disaster kills a real VM and the restore crosses substrates:
-[`demo/KIAC-PROD-VARIANT.md`](demo/KIAC-PROD-VARIANT.md)
 
 Automation scripts, credentials, caches, recordings, slide files, research notes,
 PDF, and PPTX artifacts are intentionally excluded from Git.

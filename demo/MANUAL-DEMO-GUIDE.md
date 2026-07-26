@@ -3,33 +3,46 @@
 This is the committed, step-by-step version of the demo. It contains no
 automation dependency.
 
-The main presentation uses one kind demo in three acts. The vind drill is an
-optional appendix.
+The main presentation uses one continuous demo in three acts. The vind drill is
+an optional appendix.
 
 ## 1. What each local component represents
 
 | Local component | Production meaning |
 |---|---|
-| `dr-prod` kind cluster | Active cloud region or primary data center |
+| `drprod` kiac cluster (each node its own VM) | Active cloud region or primary data center |
 | `dr-dr` kind cluster | Recovery region, account, provider, or secondary data center |
 | SeaweedFS (local S3) | Recovery vault or offsite object store |
 | Gitea | Git and infrastructure configuration outside production |
-| Stop the prod container | Loss of the source failure domain |
+| Stop the prod control-plane VM | Loss of the source failure domain |
 | SQL row check | Business-level recovery validation |
 
-kind is used because it makes the recovery control flow deterministic and visible.
-It is not presented as production infrastructure.
+Production runs on [kiac](https://github.com/saiyam1814/kiac): the node is a
+real lightweight VM with its own kernel, so stopping it is a machine loss, not
+a container stop. The recovery cluster runs on kind. The restore in Demo 2 is
+therefore a cross-substrate recovery: a backup taken on one kind of
+infrastructure, restored onto another. Both boot the same `kindest/node` image,
+so the Kubernetes and CSI behavior is identical.
+
+**No Apple silicon?** Use kind for prod too: create it with
+`kind create cluster --name dr-prod --image "$KIND_IMAGE" --wait 120s`, set
+`PROD_CTX=kind-dr-prod`, use the in-network vault URL
+`http://dr-seaweed:8333` in the prod Velero install, and stop prod in Demo 2
+with `docker stop dr-prod-control-plane`. Everything else is unchanged.
 
 ## 2. Required CLIs and tested versions
 
 Install these before starting: `docker`, `kind`, `kubectl`, `velero`, `git`,
-`curl`, `jq`, and `envsubst` (from gettext). The optional appendix also needs
-the `vcluster` CLI.
+`curl`, `jq`, and `envsubst` (from gettext). For the kiac production cluster
+(Apple silicon): `container` (apple/container) and
+`brew install saiyam1814/tap/kiac`. The optional appendix also needs the
+`vcluster` CLI.
 
 Tested versions:
 
 - Docker Desktop 29.5.2
 - kind 0.32.0
+- kiac 0.4.0 on apple/container 1.0.0 (Apple silicon)
 - Kubernetes 1.36.1
 - kubectl 1.36.3
 - Velero 1.18.2
@@ -53,17 +66,16 @@ version or digest.
 Initial setup requires internet access to download pinned images and manifests.
 The conference acts do not.
 
-Prepare everything days before the talk. Do not delete the kind clusters, Docker
-volumes, or local demo artifacts after preparation.
+Prepare everything days before the talk. Do not delete the kiac cluster, the
+kind cluster, the Docker volumes, or local demo artifacts after preparation.
 
 ## 4. Set common values
 
 Run from `kubecon-dr-talk/demo`:
 
 ```bash
-export PROD_CLUSTER=dr-prod
+export PROD_CTX=kiac-drprod
 export DR_CLUSTER=dr-dr
-export PROD_CTX=kind-dr-prod
 export DR_CTX=kind-dr-dr
 
 export KIND_IMAGE='kindest/node:v1.36.1@sha256:3489c7674813ba5d8b1a9977baea8a6e553784dab7b84759d1014dbd78f7ebd5'
@@ -74,14 +86,30 @@ export POSTGRES_IMAGE='postgres:16.14-alpine@sha256:57c72fd2a128e416c7fcc4999588
 export BUSYBOX_IMAGE='busybox:1.36.1@sha256:73aaf090f3d85aa34ee199857f03fa3a95c8ede2ffd4cc2cdb5b94e566b11662'
 ```
 
-## 5. Create the two kind clusters
+## 5. Create the two clusters
+
+Production on kiac (single VM node, ~90 seconds):
 
 ```bash
-kind create cluster --name "$PROD_CLUSTER" --image "$KIND_IMAGE" --wait 120s
+kiac create cluster --name drprod --cp-memory 6G
+kubectl --context "$PROD_CTX" get nodes
+```
+
+Recovery on kind:
+
+```bash
 kind create cluster --name "$DR_CLUSTER" --image "$KIND_IMAGE" --wait 120s
 ```
 
 Skip a command if that cluster already exists.
+
+Note the kiac networking model once: the node VM gets an IP like
+`192.168.64.x`, and the Mac itself is reachable from inside the VM at the
+subnet gateway, `192.168.64.1` (confirm your subnet in the IP column of
+`container list`). The prod cluster reaches the vault through that gateway.
+A stopped VM gets a fresh IP on the next boot; `kiac resume cluster --name
+drprod` heals everything that pins the old address. The gateway IP itself
+never changes.
 
 ## 6. Install VolumeSnapshot and VolumeGroupSnapshot APIs
 
@@ -177,9 +205,25 @@ docker run --pull=never --rm --network kind --entrypoint sh "$MC_IMAGE" -c '
 '
 ```
 
-The vault is separate from both kind clusters and uses a persistent Docker
-volume. The published host port 9200 is only needed by the kiac variant
-(`KIAC-PROD-VARIANT.md`); it does no harm otherwise.
+The vault lives outside both clusters and uses a persistent Docker volume. It
+is reachable two ways, and both matter: containers on the `kind` network reach
+it as `http://dr-seaweed:8333` (the DR cluster uses this), and the kiac VM
+reaches it through the published host port as `http://192.168.64.1:9200` (the
+prod cluster uses this).
+
+Sanity-check both paths now:
+
+```bash
+curl -fsS -o /dev/null -w 'host port: %{http_code}\n' http://127.0.0.1:9200
+
+kubectl --context "$PROD_CTX" run nettest --restart=Never \
+  --image="$BUSYBOX_IMAGE" \
+  -- sh -c 'wget -q -S -O /dev/null http://192.168.64.1:9200 2>&1 | head -1'
+kubectl --context "$PROD_CTX" wait pod/nettest \
+  --for=jsonpath='{.status.phase}'=Succeeded --timeout=90s
+kubectl --context "$PROD_CTX" logs nettest     # expect an HTTP status line
+kubectl --context "$PROD_CTX" delete pod nettest
+```
 
 ## 9. Install Velero in both clusters
 
@@ -193,13 +237,28 @@ aws_secret_access_key=minio123
 EOF
 ```
 
-Run once per context:
+Install on the prod cluster (vault via the host gateway):
 
 ```bash
-export CTX="$PROD_CTX"  # repeat later with CTX="$DR_CTX"
-
 velero install \
-  --kubecontext "$CTX" \
+  --kubecontext "$PROD_CTX" \
+  --provider aws \
+  --plugins velero/velero-plugin-for-aws:v1.14.0 \
+  --bucket velero \
+  --secret-file /tmp/velero-minio-creds \
+  --backup-location-config \
+    'region=seaweed,s3ForcePathStyle=true,s3Url=http://192.168.64.1:9200' \
+  --use-node-agent \
+  --use-volume-snapshots=false \
+  --features=EnableCSI \
+  --wait
+```
+
+Install on the recovery cluster (vault via the kind network):
+
+```bash
+velero install \
+  --kubecontext "$DR_CTX" \
   --provider aws \
   --plugins velero/velero-plugin-for-aws:v1.14.0 \
   --bucket velero \
@@ -211,6 +270,9 @@ velero install \
   --features=EnableCSI \
   --wait
 ```
+
+Same bucket, two routes: the DR cluster syncs every backup the prod cluster
+writes (within about a minute), which is what Demo 2 relies on.
 
 Verify:
 
@@ -386,7 +448,9 @@ curl -fsS http://127.0.0.1:3300/api/healthz
 Expected:
 
 - both Kubernetes APIs return `ok`
-- both backup locations are `Available`
+- both backup locations are `Available` - the prod one proves the
+  VM-to-host-gateway vault path works without internet; do not present until
+  this passes offline
 - guestbook row count is `4`
 - ledger writer is Ready
 - `dr-seaweed` and `dr-gitea` are running
@@ -450,7 +514,7 @@ Start a timer, then stop the source cluster:
 
 ```bash
 date
-docker stop dr-prod-control-plane
+container stop kiac-drprod-control-plane    # kind-prod fallback: docker stop dr-prod-control-plane
 kubectl --context "$PROD_CTX" get nodes --request-timeout=4s || true
 ```
 
@@ -771,7 +835,7 @@ the archived Docker node volume, and CPU architecture must match.
 ## Reset after rehearsal
 
 ```bash
-docker start dr-prod-control-plane || true
+kiac resume cluster --name drprod    # kind-prod fallback: docker start dr-prod-control-plane
 kubectl --context "$DR_CTX" delete namespace guestbook --ignore-not-found
 kubectl --context "$DR_CTX" delete namespace ledger --ignore-not-found
 kubectl --context "$DR_CTX" apply -f manifests/ledger/ledger.yaml

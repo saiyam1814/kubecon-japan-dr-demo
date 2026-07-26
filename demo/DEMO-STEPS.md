@@ -6,7 +6,7 @@ one-time setup from `MANUAL-DEMO-GUIDE.md` is complete. Run from `demo/`.
 Set once:
 
 ```bash
-export PROD_CTX=kind-dr-prod   # or kiac-drprod when using KIAC-PROD-VARIANT.md
+export PROD_CTX=kiac-drprod    # kind-prod fallback: kind-dr-prod
 export DR_CTX=kind-dr-dr
 ```
 
@@ -58,9 +58,9 @@ recovery. Uses `$BACKUP` from Demo 1 (both clusters see the same bucket).
 # Record the start time
 date
 
-# Stop the production control plane
-docker stop dr-prod-control-plane            # kind prod
-# container stop kiac-drprod-control-plane   # kiac variant
+# Stop the production control plane: powering off a real VM
+container stop kiac-drprod-control-plane
+# kind-prod fallback: docker stop dr-prod-control-plane
 
 # Confirm the production API no longer answers
 kubectl --context "$PROD_CTX" get nodes --request-timeout=4s || true
@@ -244,8 +244,8 @@ the rehearsal backup are never touched by the demos, so they need no reset.
 
 ```bash
 # Bring the production control plane back (Demo 2 leaves it stopped)
-docker start dr-prod-control-plane            # kind prod
-# kiac resume cluster --name drprod           # kiac variant instead
+kiac resume cluster --name drprod
+# kind-prod fallback: docker start dr-prod-control-plane
 until kubectl --context "$PROD_CTX" get --raw=/readyz --request-timeout=5s >/dev/null 2>&1; do sleep 5; done
 
 # Ensure the production guestbook exists and holds the four seeded rows
