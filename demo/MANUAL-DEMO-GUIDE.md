@@ -398,6 +398,24 @@ kubectl --context "$DR_CTX" -n argocd rollout status \
   deployment/argocd-repo-server --timeout 300s
 ```
 
+Argo CD ships with `imagePullPolicy: Always`, which means a pod restart while
+offline re-pulls the image and fails even though the image is cached on the
+node. Switch every component to `IfNotPresent` so the offline conference
+setup survives restarts:
+
+```bash
+for d in argocd-applicationset-controller argocd-redis argocd-repo-server; do
+  kubectl --context "$DR_CTX" -n argocd patch deployment "$d" --type json \
+    -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
+done
+
+kubectl --context "$DR_CTX" -n argocd patch statefulset argocd-application-controller --type json \
+  -p='[{"op":"replace","path":"/spec/template/spec/containers/0/imagePullPolicy","value":"IfNotPresent"}]'
+
+kubectl --context "$DR_CTX" -n argocd rollout status \
+  deployment/argocd-repo-server --timeout 300s
+```
+
 Create the default project:
 
 ```bash
