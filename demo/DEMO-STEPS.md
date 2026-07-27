@@ -13,6 +13,26 @@ export DR_CTX=kind-dr-dr
 
 ---
 
+## Tour the lab (optional, ~1 min)
+
+Shows what the demos run on before anything is touched.
+
+```bash
+# Production: one node, and it is its own lightweight VM (note the kernel column)
+kubectl --context "$PROD_CTX" get nodes -o wide
+
+# The same node seen from the host: a VM with its own IP and memory
+container list
+
+# What production runs: the Postgres guestbook (Velero and CSI installed during setup)
+kubectl --context "$PROD_CTX" -n guestbook get pods
+
+# The recovery cluster, on kind, empty of the app
+kubectl --context "$DR_CTX" get nodes
+```
+
+---
+
 ## Demo 1 - Velero backup and restore
 
 Shows that Velero can back up a stateful app (objects + PV data) and restore
