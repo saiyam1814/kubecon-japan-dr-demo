@@ -66,6 +66,11 @@ container stop kiac-drprod-control-plane
 # Confirm the production API no longer answers
 kubectl --context "$PROD_CTX" get nodes --request-timeout=4s || true
 
+# The recovery cluster: separate failure domain, created BEFORE the disaster,
+# with its own Velero (same vault) and Argo CD (same Git) - and no guestbook yet
+kubectl --context "$DR_CTX" get nodes
+kubectl --context "$DR_CTX" get namespaces
+
 # Trigger the Argo CD sync in the recovery cluster
 kubectl --context "$DR_CTX" -n argocd patch application guestbook --type merge \
   -p '{"operation":{"initiatedBy":{"username":"on-call"},"sync":{"revision":"HEAD"}}}'
