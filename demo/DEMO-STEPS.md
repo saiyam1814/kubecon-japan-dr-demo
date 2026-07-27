@@ -123,9 +123,16 @@ date
 
 Shows that snapshots of two volumes taken at different times restore into a
 state that never existed (payments without orders), and that one
-VolumeGroupSnapshot produces a consistent recovery point. The ledger app
-writes matched ORDER/PAYMENT pairs to two PVCs; a `.pause` file pauses the
-writer so timing is deterministic.
+VolumeGroupSnapshot produces a consistent recovery point.
+
+How the prop works: the ledger (`manifests/ledger/ledger.yaml`, deployed
+during setup) is one pod writing matched pairs - `ORDER n` to one PVC,
+`PAYMENT n` to another - five times a second. The invariant is that every
+payment has its order. Touching `/orders/.pause` freezes the writer (removing
+it resumes), so the only skew in the demo is the deliberate 5-second gap
+between the two snapshots. `RUN_ID` suffixes every generated name so the demo
+can be rerun without collisions. The verifier job compares the last sequence
+number on each restored volume.
 
 ```bash
 # Fresh run id and a clean ledger
