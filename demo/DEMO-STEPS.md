@@ -34,7 +34,10 @@ kubectl --context "$PROD_CTX" -n guestbook get pods
 ## Demo 1 - Velero backup and restore
 
 Shows that Velero can back up a stateful app (objects + PV data) and restore
-it, data included.
+it, data included. (In the conference talk, only the first half - showing the
+data and the moved bytes - is used; the delete-and-restore half is optional
+there because Demo 2 performs a full live restore. For reproducing at home,
+run all of it.)
 
 ```bash
 # Find the newest completed backup (created during setup, stored in SeaweedFS)
