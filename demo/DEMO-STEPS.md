@@ -13,9 +13,10 @@ export DR_CTX=kind-dr-dr
 
 ---
 
-## Tour the lab (optional, ~1 min)
+## Tour the production cluster (optional, ~1 min)
 
-Shows what the demos run on before anything is touched.
+Shows what Demo 1 runs on before anything is touched. The recovery cluster is
+introduced inside Demo 2, at the moment it takes over.
 
 ```bash
 # Production: one node, and it is its own lightweight VM (note the kernel column)
@@ -26,9 +27,6 @@ container list
 
 # What production runs: the Postgres guestbook (Velero and CSI installed during setup)
 kubectl --context "$PROD_CTX" -n guestbook get pods
-
-# The recovery cluster, on kind, empty of the app
-kubectl --context "$DR_CTX" get nodes
 ```
 
 ---
