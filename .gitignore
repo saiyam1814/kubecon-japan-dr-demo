@@ -1,5 +1,5 @@
 # Local automation and generated demo state
-demo/csi-driver-host-path/
+csi-driver-host-path/
 demo/scripts/
 demo/.cache/
 demo/.local/

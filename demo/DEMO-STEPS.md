@@ -23,7 +23,7 @@ introduced inside Demo 2, at the moment it takes over.
 kubectl --context "$PROD_CTX" get nodes -o wide
 
 # The same node seen from the host: a VM with its own IP and memory
-container list
+container list    # kiac only; skip on the kind-prod fallback
 
 # What production runs: the Postgres guestbook (Velero and CSI installed during setup)
 kubectl --context "$PROD_CTX" -n guestbook get pods
@@ -74,7 +74,9 @@ kubectl --context "$PROD_CTX" -n guestbook exec statefulset/postgres -- \
 
 Shows that GitOps recreates the declared objects but not the stored data, and
 that the Velero recovery point restored in the right order completes the
-recovery. Uses `$BACKUP` from Demo 1 (both clusters see the same bucket).
+recovery. Uses `$BACKUP` from Demo 1 (both clusters see the same bucket). In a
+fresh terminal, re-run Demo 1's first step - it works from either cluster's
+context - before the restore below.
 
 ```bash
 # Record the start time
