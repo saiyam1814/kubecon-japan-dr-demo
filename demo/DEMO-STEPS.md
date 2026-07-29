@@ -120,8 +120,15 @@ date
 ## Demo 3 - individual snapshots vs one VolumeGroupSnapshot
 
 Shows that snapshots of two volumes taken at different times restore into a
-state that never existed (payments without orders), and that one
-VolumeGroupSnapshot produces a consistent recovery point.
+state that never existed (payments without orders), and then demonstrates the
+VolumeGroupSnapshot API and member-restore workflow.
+
+Honesty note: the CSI hostpath driver is test-only and archives member volumes
+sequentially, and the writer is paused around snapshots for deterministic
+output. The demo therefore shows the group-snapshot API and workflow, not
+storage-array atomicity. With a production driver that implements the CSI
+group RPCs, the storage backend provides the coordinated same-point-in-time
+guarantee.
 
 How the prop works: the ledger (`manifests/ledger/ledger.yaml`, deployed
 during setup) is one pod writing matched pairs - `ORDER n` to one PVC,
